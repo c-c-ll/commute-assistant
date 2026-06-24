@@ -1,104 +1,61 @@
 import type { TransitPlan, TransitStep, WalkStep, TimetableStop } from "../types";
 
-const API_BASE = (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_API_BASE)
-  || "https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api";
-
-interface AmapTransitResponse {
-  status: string; count: string; info: string;
-  route: { origin: string; destination: string; distance: string; taxi_cost: string; transits: AmapTransit[]; } | undefined;
-}
-
-interface AmapTransit {
-  cost: string; duration: string; nightflag: string; walking_distance: string; distance: string; missed: string;
-  segments: AmapSegment[];
-}
-
-interface AmapPortal { name: string; location: string; }
-
-interface AmapSegment {
-  walking: { origin: string; destination: string; distance: string; duration: string; steps: AmapWalkStep[]; };
-  bus?: { buslines: AmapBusLine[]; };
-  entrance?: AmapPortal | AmapPortal[];
-  exit?: AmapPortal | AmapPortal[];
-}
-
-interface AmapBusLine {
-  name: string; type: string; cost: string; duration: string; distance: string;
-  via_num: string; via_stops: Array<{ name: string; location: string }>;
-  departure_stop: { name: string; location: string; id?: string };
-  arrival_stop: { name: string; location: string; id?: string };
-  color?: string;
-  start_time?: string | string[]; end_time?: string | string[];
-}
-
-interface AmapWalkStep {
-  instruction: string; orientation: string; road: string | string[]; distance: string; action: string | string[];
-}
+const API_BASE = "https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api";
 
 export interface InputTip {
   id: string; name: string; district: string; location: string; address: string; typecode: string;
 }
 
 let queryTimestamp = 0;
-export function getQueryTimestamp(): number { return queryTimestamp; }
-
-function getPortalName(portal: AmapPortal | AmapPortal[] | undefined): string {
-  if (!portal) return "";
-  if (Array.isArray(portal)) return portal.length > 0 ? portal[0].name : "";
-  return portal.name || "";
-}
-
-function extractWalkRoad(step: AmapWalkStep): string {
-  var road = step.road;
-  if (typeof road === "string") return road;
-  if (Array.isArray(road) && road.length > 0) return road[0];
-  return "";
-}
-
-function extractAction(step: AmapWalkStep): string {
-  var action = step.action;
-  if (typeof action === "string") return action;
-  if (Array.isArray(action) && action.length > 0) return action[0];
-  return "";
-}
-
-function pickTime(val: string | string[] | undefined): string {
-  if (!val) return "";
-  if (Array.isArray(val)) return val.length > 0 ? val[0] : "";
-  return val;
-}
+export function getQueryTimestamp() { return queryTimestamp; }
 
 export function formatTimeStr(time: string): string {
   if (!time || time.length !== 4) return time || "";
   return time.slice(0, 2) + ":" + time.slice(2);
 }
 
-function parseSteps(transit: AmapTransit): TransitStep[] {
+function pickTime(val: any): string {
+  if (!val) return "";
+  if (Array.isArray(val)) return val.length > 0 ? val[0] : "";
+  return val;
+}
+
+function getPortalName(portal: any): string {
+  if (!portal) return "";
+  if (Array.isArray(portal)) return portal.length > 0 ? portal[0].name : "";
+  return portal.name || "";
+}
+
+function parseSteps(transit: any): TransitStep[] {
   var steps: TransitStep[] = [];
-  var segments = transit.segments;
+  var segments = transit.segments || [];
   for (var i = 0; i < segments.length; i++) {
     var seg = segments[i];
-    var hasTransit = seg.bus && seg.bus.buslines.length > 0;
+    var hasTransit = seg.bus && seg.bus.buslines && seg.bus.buslines.length > 0;
     var wd = seg.walking ? parseInt(seg.walking.distance) : 0;
     if (seg.walking && wd > 0) {
       var wdur = parseInt(seg.walking.duration);
-      var wss = seg.walking.steps;
-      var sub: WalkStep[] = wss.map(function(s) { return { road: extractWalkRoad(s), distance: parseInt(s.distance) || 0, action: extractAction(s) }; });
+      var wss = seg.walking.steps || [];
+      var sub: WalkStep[] = wss.map(function(s: any) {
+        var road = typeof s.road === "string" ? s.road : (Array.isArray(s.road) && s.road.length > 0 ? s.road[0] : "");
+        var action = typeof s.action === "string" ? s.action : (Array.isArray(s.action) && s.action.length > 0 ? s.action[0] : "");
+        return { road: road, distance: parseInt(s.distance) || 0, action: action };
+      });
       var isFirst = i === 0;
       var isLast = i === segments.length - 1 && !hasTransit;
       var msg = "";
       if (isFirst) msg = "步行" + wd + "米至公交站";
       else if (isLast) msg = "步行" + wd + "米到达目的地";
-      else { var ns = segments[i+1]; var nl = ns && ns.bus && ns.bus.buslines ? ns.bus.buslines[0] : null; msg = nl ? "步行" + wd + "米换乘" + nl.name : "步行" + wd + "米（约" + Math.ceil(wdur/60) + "分钟）"; }
+      else { var ns = segments[i+1]; var nl = ns && ns.bus && ns.bus.buslines ? ns.bus.buslines[0] : null; msg = nl ? "步行" + wd + "米换乘" + nl.name : "步行" + wd + "米"; }
       steps.push({ instruction: msg, type: "walk", distance: wd, duration: wdur, walkSteps: sub });
     }
     if (hasTransit && seg.bus && seg.bus.buslines) {
       var line = seg.bus.buslines[0];
-      var isSub = line.type.includes("地铁");
+      var isSub = line.type && line.type.includes("地铁");
       var sc = parseInt(line.via_num) + 1;
       var from = line.departure_stop ? line.departure_stop.name : "";
       var to = line.arrival_stop ? line.arrival_stop.name : "";
-      var vn: string[] = line.via_stops ? line.via_stops.map(function(s) { return s.name; }) : [];
+      var vn: string[] = line.via_stops ? line.via_stops.map(function(s: any) { return s.name; }) : [];
       var sl: TimetableStop[] = [{ name: from, isDeparture: true, isArrival: false }];
       for (var j = 0; j < vn.length; j++) sl.push({ name: vn[j], isDeparture: false, isArrival: false });
       if (to && to !== from) sl.push({ name: to, isDeparture: false, isArrival: true });
@@ -113,15 +70,16 @@ function parseSteps(transit: AmapTransit): TransitStep[] {
   return steps;
 }
 
-function countTransfers(transit: AmapTransit): number {
+function countTransfers(transit: any): number {
   var c = 0;
-  for (var i = 0; i < transit.segments.length; i++) if (transit.segments[i].bus && transit.segments[i].bus!.buslines.length > 0) c++;
+  var segs = transit.segments || [];
+  for (var i = 0; i < segs.length; i++) if (segs[i].bus && segs[i].bus.buslines && segs[i].bus.buslines.length > 0) c++;
   return Math.max(0, c - 1);
 }
 
-export function parseTransitResponse(data: AmapTransitResponse): TransitPlan[] {
+export function parseTransitResponse(data: any): TransitPlan[] {
   if (!data.route || !data.route.transits) return [];
-  var plans: TransitPlan[] = data.route.transits.map(function(t, idx) {
+  var plans: TransitPlan[] = data.route.transits.map(function(t: any, idx: number) {
     var st = parseSteps(t);
     var tags: string[] = [];
     if (st.some(function(s) { return s.type === "subway"; })) tags.push("地铁");
