@@ -1,7 +1,7 @@
 {
+  "name": "projects",
   "scripts": {
-    "build": "vite build",
-    "dev": "node scripts/dev.mjs"
+    "build": "vite build"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.95.3",
