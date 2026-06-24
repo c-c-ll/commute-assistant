@@ -1,4 +1,4 @@
-const API_BASE = __API_BASE__ || '/api';
+var API_BASE = "https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api";
 
 import type { TransitPlan, TransitStep, WalkStep, TimetableStop } from '../types';
 
