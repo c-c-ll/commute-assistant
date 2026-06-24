@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react-swc';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+   define: {
+    'import.meta.env.VITE_API_BASE': JSON.stringify('https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api'),
+  },
   plugins: [
     react(),
     VitePWA({
