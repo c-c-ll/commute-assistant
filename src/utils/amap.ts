@@ -1,7 +1,5 @@
 var API_BASE = "https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api";
 
-import type { TransitPlan, TransitStep, WalkStep, TimetableStop } from '../types';
-
 interface AmapTransitResponse {
   status: string; count: string; info: string;
   route?: { origin: string; destination: string; distance: string; taxi_cost: string; transits: AmapTransit[]; };
