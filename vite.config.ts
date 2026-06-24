@@ -5,7 +5,6 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 export default defineConfig({
-  define: { __API_BASE__: JSON.stringify(process.env.VITE_API_BASE || '/api') },
   plugins: [
     react(),
     {
@@ -13,11 +12,11 @@ export default defineConfig({
       apply: 'serve',
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
-          const url = req.url || '';
+          var url = req.url || '';
           if (url === '/sw.js' || url.startsWith('/workbox-') || url === '/registerSW.js') {
-            const filePath = resolve(process.cwd(), 'dev-dist', url.slice(1));
+            var filePath = resolve(process.cwd(), 'dev-dist', url.slice(1));
             if (existsSync(filePath)) {
-              const content = readFileSync(filePath, 'utf8');
+              var content = readFileSync(filePath, 'utf8');
               res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
               res.setHeader('Service-Worker-Allowed', '/');
               res.statusCode = 200;
@@ -35,8 +34,8 @@ export default defineConfig({
       injectRegister: 'auto',
       devOptions: { enabled: true, type: 'module' },
       manifest: {
-        name: '鍖椾含閫氬嫟鍔╂墜', short_name: '閫氬嫟鍔╂墜',
-        description: '鍖椾含鍏氦鍦伴搧璺嚎瑙勫垝鏌ヨ',
+        name: '北京通勤助手', short_name: '通勤助手',
+        description: '北京公交地铁路线规划查询',
         start_url: '/', display: 'standalone', orientation: 'portrait',
         background_color: '#f8fafc', theme_color: '#2563eb', lang: 'zh-CN',
         icons: [
