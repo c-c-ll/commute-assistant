@@ -2,137 +2,282 @@ import type { TransitPlan, TransitStep, WalkStep, TimetableStop } from "../types
 
 const API_BASE = "https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api";
 
-export interface InputTip {
-  id: string; name: string; district: string; location: string; address: string; typecode: string;
+interface AmapTransitResponse {
+  status: string;
+  count: string;
+  info: string;
+  route?: {
+    origin: string;
+    destination: string;
+    distance: string;
+    taxi_cost: string;
+    transits: AmapTransit[];
+  };
 }
 
-let queryTimestamp = 0;
-export function getQueryTimestamp() { return queryTimestamp; }
+interface AmapTransit {
+  cost: string;
+  duration: string;
+  nightflag: string;
+  walking_distance: string;
+  distance: string;
+  missed: string;
+  segments: AmapSegment[];
+}
+
+interface AmapPortal {
+  name: string;
+  location: string;
+}
+
+interface AmapSegment {
+  walking: {
+    origin: string;
+    destination: string;
+    distance: string;
+    duration: string;
+    steps: AmapWalkStep[];
+  };
+  bus?: {
+    buslines: AmapBusLine[];
+  };
+  entrance?: AmapPortal | AmapPortal[];
+  exit?: AmapPortal | AmapPortal[];
+}
+
+interface AmapBusLine {
+  name: string;
+  type: string;
+  cost: string;
+  duration: string;
+  distance: string;
+  via_num: string;
+  via_stops: Array<{ name: string; location: string }>;
+  departure_stop: { name: string; location: string; id?: string };
+  arrival_stop: { name: string; location: string; id?: string };
+  color?: string;
+  start_time?: string | string[];
+  end_time?: string | string[];
+  station_start_time?: string;
+  station_end_time?: string;
+}
+
+interface AmapWalkStep {
+  instruction: string;
+  orientation: string;
+  road: string | string[];
+  distance: string;
+  action: string | string[];
+}
+
+export interface InputTip {
+  id: string;
+  name: string;
+  district: string;
+  location: string;
+  address: string;
+  typecode: string;
+}
+
+let queryTimestamp: number = 0;
+export function getQueryTimestamp(): number { return queryTimestamp; }
+
+function getPortalName(portal: AmapPortal | AmapPortal[] | undefined): string {
+  if (!portal) return "";
+  if (Array.isArray(portal)) return portal.length > 0 ? portal[0].name : "";
+  return portal.name || "";
+}
+
+function extractWalkRoad(step: AmapWalkStep): string {
+  const road = step.road;
+  if (typeof road === "string") return road;
+  if (Array.isArray(road) && road.length > 0) return road[0];
+  return "";
+}
+
+function extractAction(step: AmapWalkStep): string {
+  const action = step.action;
+  if (typeof action === "string") return action;
+  if (Array.isArray(action) && action.length > 0) return action[0];
+  return "";
+}
+
+function pickTime(val: string | string[] | undefined): string {
+  if (!val) return "";
+  if (Array.isArray(val)) return val.length > 0 ? val[0] : "";
+  return val;
+}
 
 export function formatTimeStr(time: string): string {
   if (!time || time.length !== 4) return time || "";
   return time.slice(0, 2) + ":" + time.slice(2);
 }
 
-function pickTime(val: any): string {
-  if (!val) return "";
-  if (Array.isArray(val)) return val.length > 0 ? val[0] : "";
-  return val;
-}
+function parseSteps(transit: AmapTransit): TransitStep[] {
+  const steps: TransitStep[] = [];
+  const segments = transit.segments;
 
-function getPortalName(portal: any): string {
-  if (!portal) return "";
-  if (Array.isArray(portal)) return portal.length > 0 ? portal[0].name : "";
-  return portal.name || "";
-}
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    const hasTransit = segment.bus && segment.bus.buslines.length > 0;
+    const walkDist = segment.walking ? parseInt(segment.walking.distance) : 0;
 
-function parseSteps(transit: any): TransitStep[] {
-  var steps: TransitStep[] = [];
-  var segments = transit.segments || [];
-  for (var i = 0; i < segments.length; i++) {
-    var seg = segments[i];
-    var hasTransit = seg.bus && seg.bus.buslines && seg.bus.buslines.length > 0;
-    var wd = seg.walking ? parseInt(seg.walking.distance) : 0;
-    if (seg.walking && wd > 0) {
-      var wdur = parseInt(seg.walking.duration);
-      var wss = seg.walking.steps || [];
-      var sub: WalkStep[] = wss.map(function(s: any) {
-        var road = typeof s.road === "string" ? s.road : (Array.isArray(s.road) && s.road.length > 0 ? s.road[0] : "");
-        var action = typeof s.action === "string" ? s.action : (Array.isArray(s.action) && s.action.length > 0 ? s.action[0] : "");
-        return { road: road, distance: parseInt(s.distance) || 0, action: action };
+    if (segment.walking && walkDist > 0) {
+      const walkDuration = parseInt(segment.walking.duration);
+      const subSteps: WalkStep[] = segment.walking.steps.map(function(s) {
+        return {
+          road: extractWalkRoad(s),
+          distance: parseInt(s.distance) || 0,
+          action: extractAction(s),
+        };
       });
-      var isFirst = i === 0;
-      var isLast = i === segments.length - 1 && !hasTransit;
-      var msg = "";
-      if (isFirst) msg = "步行" + wd + "米至公交站";
-      else if (isLast) msg = "步行" + wd + "米到达目的地";
-      else { var ns = segments[i+1]; var nl = ns && ns.bus && ns.bus.buslines ? ns.bus.buslines[0] : null; msg = nl ? "步行" + wd + "米换乘" + nl.name : "步行" + wd + "米"; }
-      steps.push({ instruction: msg, type: "walk", distance: wd, duration: wdur, walkSteps: sub });
+
+      const isInitialWalk = i === 0;
+      const isFinalWalk = i === segments.length - 1 && !hasTransit;
+      let walkInstruction: string;
+      if (isInitialWalk) {
+        walkInstruction = "步行" + walkDist + "米至公交站";
+      } else if (isFinalWalk) {
+        walkInstruction = "步行" + walkDist + "米到达目的地";
+      } else {
+        const nextSeg = segments[i + 1];
+        const nextLine = nextSeg && nextSeg.bus && nextSeg.bus.buslines ? nextSeg.bus.buslines[0] : null;
+        walkInstruction = nextLine
+          ? "步行" + walkDist + "米换乘" + nextLine.name
+          : "步行" + walkDist + "米（约" + Math.ceil(walkDuration / 60) + "分钟）";
+      }
+
+      steps.push({
+        instruction: walkInstruction,
+        type: "walk",
+        distance: walkDist,
+        duration: walkDuration,
+        walkSteps: subSteps,
+      });
     }
-    if (hasTransit && seg.bus && seg.bus.buslines) {
-      var line = seg.bus.buslines[0];
-      var isSub = line.type && line.type.includes("地铁");
-      var sc = parseInt(line.via_num) + 1;
-      var from = line.departure_stop ? line.departure_stop.name : "";
-      var to = line.arrival_stop ? line.arrival_stop.name : "";
-      var vn: string[] = line.via_stops ? line.via_stops.map(function(s: any) { return s.name; }) : [];
-      var sl: TimetableStop[] = [{ name: from, isDeparture: true, isArrival: false }];
-      for (var j = 0; j < vn.length; j++) sl.push({ name: vn[j], isDeparture: false, isArrival: false });
-      if (to && to !== from) sl.push({ name: to, isDeparture: false, isArrival: true });
-      var dn = line.name.replace(/\(.*?\)/g, "").replace("地铁", "").replace("号线", "号线");
-      var en = getPortalName(seg.entrance);
-      if (en) steps.push({ instruction: "从" + en + "进站", type: "transfer" });
-      steps.push({ instruction: "乘坐" + dn + "（" + from + "->" + to + "，" + sc + "站）", type: isSub ? "subway" : "bus", lineName: dn, lineColor: line.color || (isSub ? "#2563eb" : "#10b981"), lineType: line.type, stationCount: sc, duration: parseInt(line.duration), distance: parseInt(line.distance), from: from, to: to, viaStops: vn, startTime: pickTime(line.start_time), endTime: pickTime(line.end_time), stopList: sl });
-      var ex = getPortalName(seg.exit);
-      if (ex) steps.push({ instruction: "从" + ex + "出站", type: "transfer" });
+
+    if (hasTransit && segment.bus && segment.bus.buslines) {
+      const line = segment.bus.buslines[0];
+      const isSubway = line.type.includes("地铁");
+      const stationCount = parseInt(line.via_num) + 1;
+      const fromStation = line.departure_stop ? line.departure_stop.name : "";
+      const toStation = line.arrival_stop ? line.arrival_stop.name : "";
+      const viaNames: string[] = line.via_stops ? line.via_stops.map(function(s: { name: string }) { return s.name; }) : [];
+
+      const stopList: TimetableStop[] = [{ name: fromStation, isDeparture: true, isArrival: false }];
+      for (const via of viaNames) stopList.push({ name: via, isDeparture: false, isArrival: false });
+      if (toStation && toStation !== fromStation) stopList.push({ name: toStation, isDeparture: false, isArrival: true });
+
+      const displayName = line.name.replace(/\(.*?\)/g, "").replace("地铁", "").replace("号线", "号线");
+
+      const entranceName = getPortalName(segment.entrance);
+      if (entranceName) steps.push({ instruction: "从" + entranceName + "进站", type: "transfer" });
+
+      steps.push({
+        instruction: "乘坐" + displayName + "（" + fromStation + "->" + toStation + "，" + stationCount + "站）",
+        type: isSubway ? "subway" : "bus",
+        lineName: displayName,
+        lineColor: line.color || (isSubway ? "#2563eb" : "#10b981"),
+        lineType: line.type,
+        stationCount,
+        duration: parseInt(line.duration),
+        distance: parseInt(line.distance),
+        from: fromStation,
+        to: toStation,
+        viaStops: viaNames,
+        startTime: pickTime(line.start_time),
+        endTime: pickTime(line.end_time),
+        stopList: stopList,
+      });
+
+      const exitName = getPortalName(segment.exit);
+      if (exitName) steps.push({ instruction: "从" + exitName + "出站", type: "transfer" });
     }
   }
+
   return steps;
 }
 
-function countTransfers(transit: any): number {
-  var c = 0;
-  var segs = transit.segments || [];
-  for (var i = 0; i < segs.length; i++) if (segs[i].bus && segs[i].bus.buslines && segs[i].bus.buslines.length > 0) c++;
-  return Math.max(0, c - 1);
+function countTransfers(transit: AmapTransit): number {
+  let count = 0;
+  for (const segment of transit.segments) {
+    if (segment.bus && segment.bus.buslines.length > 0) count++;
+  }
+  return Math.max(0, count - 1);
 }
 
-export function parseTransitResponse(data: any): TransitPlan[] {
+export function parseTransitResponse(data: AmapTransitResponse): TransitPlan[] {
   if (!data.route || !data.route.transits) return [];
-  var plans: TransitPlan[] = data.route.transits.map(function(t: any, idx: number) {
-    var st = parseSteps(t);
-    var tags: string[] = [];
-    if (st.some(function(s) { return s.type === "subway"; })) tags.push("地铁");
-    var tf = countTransfers(t);
-    if (tf === 0) tags.push("直达");
-    var cst = parseFloat(t.cost) || 0;
-    if (cst === 0) tags.push("免费");
-    return { id: "plan-" + idx, totalDuration: parseInt(t.duration), totalDistance: parseInt(t.distance), walkDistance: parseInt(t.walking_distance), cost: cst, transferCount: tf, tags: tags, steps: st, isRecommended: idx === 0 };
+
+  const plans: TransitPlan[] = data.route.transits.map(function(transit, index) {
+    const totalDuration = parseInt(transit.duration);
+    const walkDistance = parseInt(transit.walking_distance);
+    const cost = parseFloat(transit.cost) || 0;
+    const transferCount = countTransfers(transit);
+    const steps = parseSteps(transit);
+    const tags: string[] = [];
+    if (steps.some(function(s) { return s.type === "subway"; })) tags.push("地铁");
+    if (transferCount === 0) tags.push("直达");
+    if (cost === 0) tags.push("免费");
+    return {
+      id: "plan-" + index,
+      totalDuration,
+      totalDistance: parseInt(transit.distance),
+      walkDistance,
+      cost,
+      transferCount,
+      tags,
+      steps,
+      isRecommended: index === 0,
+    };
   });
+
   plans.sort(function(a, b) { return a.totalDuration - b.totalDuration; });
   plans.forEach(function(p, i) { p.isRecommended = i === 0; });
   return plans;
 }
 
-function qs(obj: Record<string, string>): string {
-  return Object.keys(obj).map(function(k) { return encodeURIComponent(k) + "=" + encodeURIComponent(obj[k]); }).join("&");
-}
-
-export async function fetchInputTips(keywords: string, city?: string): Promise<InputTip[]> {
+export async function fetchInputTips(keywords: string, city: string = "北京"): Promise<InputTip[]> {
   if (!keywords || keywords.trim().length === 0) return [];
-  var c = city || "北京";
-  var r = await fetch(API_BASE + "/inputtips?" + qs({ keywords: keywords, city: c }));
-  if (!r.ok) return [];
-  var d = await r.json();
-  if (d.status !== "1" || !d.tips) return [];
-  return d.tips.filter(function(t: InputTip) { return t.location && t.location.indexOf(",") > -1; }).slice(0, 6);
+  const params = new URLSearchParams({ keywords, city });
+  const response = await fetch(API_BASE + "/inputtips?" + params.toString());
+  if (!response.ok) return [];
+  const data = await response.json();
+  if (data.status !== "1" || !data.tips) return [];
+  return data.tips.filter(function(t: InputTip) {
+    return t.location && t.location.indexOf(",") > -1;
+  }).slice(0, 6);
 }
 
-export async function fetchTransitPlans(origin: string, destination: string, city?: string): Promise<TransitPlan[]> {
+export async function fetchTransitPlans(origin: string, destination: string, city: string = "北京"): Promise<TransitPlan[]> {
   queryTimestamp = Math.floor(Date.now() / 1000);
-  var c = city || "北京";
-  var r = await fetch(API_BASE + "/transit?" + qs({ origin: origin, destination: destination, city: c, time: String(queryTimestamp) }));
-  if (!r.ok) { var e = await r.json().catch(function() { return { error: "请求失败" }; }); throw new Error(e.error || "请求失败 (" + r.status + ")"); }
-  var d = await r.json();
-  if (d.status !== "1") throw new Error(d.info || "API请求失败");
-  return parseTransitResponse(d);
+  const params = new URLSearchParams({ origin, destination, city, time: queryTimestamp.toString() });
+  const response = await fetch(API_BASE + "/transit?" + params.toString());
+  if (!response.ok) {
+    const errData = await response.json().catch(function() { return { error: "请求失败" }; });
+    throw new Error(errData.error || "请求失败");
+  }
+  const data: AmapTransitResponse = await response.json();
+  if (data.status !== "1") throw new Error(data.info || "API请求失败");
+  return parseTransitResponse(data);
 }
 
-export async function fetchGeocode(address: string, city?: string): Promise<string> {
-  var c = city || "北京";
-  var r = await fetch(API_BASE + "/geocode?" + qs({ address: address, city: c }));
-  if (!r.ok) throw new Error("地理编码请求失败");
-  var d = await r.json();
-  if (d.status !== "1" || !d.geocodes || d.geocodes.length === 0) throw new Error(d.info || "未找到坐标");
-  return d.geocodes[0].location;
+export async function fetchGeocode(address: string, city: string = "北京"): Promise<string> {
+  const params = new URLSearchParams({ address, city });
+  const response = await fetch(API_BASE + "/geocode?" + params.toString());
+  if (!response.ok) throw new Error("请求失败");
+  const data = await response.json();
+  if (data.status !== "1" || !data.geocodes || data.geocodes.length === 0) throw new Error("未找到坐标");
+  return data.geocodes[0].location;
 }
 
 export function formatDuration(seconds: number): string {
   if (seconds < 60) return seconds + "秒";
-  var m = Math.round(seconds / 60);
-  if (m < 60) return m + "分钟";
-  var h = Math.floor(m / 60), r = m % 60;
-  return r > 0 ? h + "小时" + r + "分钟" : h + "小时";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes + "分钟";
+  const hours = Math.floor(minutes / 60);
+  const remainMinutes = minutes % 60;
+  return remainMinutes > 0 ? hours + "小时" + remainMinutes + "分钟" : hours + "小时";
 }
 
 export function formatDistance(meters: number): string {
@@ -141,36 +286,40 @@ export function formatDistance(meters: number): string {
 }
 
 export function formatTime(seconds: number): string {
-  var d = new Date();
+  const d = new Date();
   d.setSeconds(d.getSeconds() + seconds);
   return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
 }
 
-export function formatRelativeTime(s: number): string {
-  if (s < 0) return "已过";
-  if (s < 60) return s + "秒后";
-  var m = Math.round(s / 60);
-  if (m < 60) return m + "分钟后";
-  var h = Math.floor(m / 60), r = m % 60;
-  return r > 0 ? h + "小时" + r + "分钟后" : h + "小时后";
+export function formatRelativeTime(secondsFromNow: number): string {
+  if (secondsFromNow < 0) return "已过";
+  if (secondsFromNow < 60) return secondsFromNow + "秒后";
+  const minutes = Math.round(secondsFromNow / 60);
+  if (minutes < 60) return minutes + "分钟后";
+  const hours = Math.floor(minutes / 60);
+  const remainMinutes = minutes % 60;
+  return remainMinutes > 0 ? hours + "小时" + remainMinutes + "分钟后" : hours + "小时后";
 }
 
-export function parseTimeToMinutes(t: string): number {
-  if (!t || t.length < 4) return -1;
-  var h = parseInt(t.slice(0, 2)), m = parseInt(t.slice(2, 4));
+export function parseTimeToMinutes(timeStr: string): number {
+  if (!timeStr || timeStr.length < 4) return -1;
+  const h = parseInt(timeStr.slice(0, 2));
+  const m = parseInt(timeStr.slice(2, 4));
   if (isNaN(h) || isNaN(m)) return -1;
   return h * 60 + m;
 }
 
-export function computeNextDepartureMinutes(st: string, et: string): number | null {
-  if (!st) return null;
-  var sm = parseTimeToMinutes(st);
-  if (sm < 0) return null;
-  var n = new Date(), nm = n.getHours() * 60 + n.getMinutes();
-  var em = et ? parseTimeToMinutes(et) : 24 * 60;
-  if (et && nm >= em) return null;
-  if (nm < sm) return sm - nm;
-  var nd = sm + Math.ceil((nm - sm) / 10) * 10;
-  if (et && nd >= em) return null;
-  return Math.max(0, nd - nm);
+export function computeNextDepartureMinutes(startTimeStr: string, endTimeStr: string): number | null {
+  if (!startTimeStr) return null;
+  const startMinutes = parseTimeToMinutes(startTimeStr);
+  if (startMinutes < 0) return null;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const endMinutes = endTimeStr ? parseTimeToMinutes(endTimeStr) : 24 * 60;
+  if (endTimeStr && nowMinutes >= endMinutes) return null;
+  if (nowMinutes < startMinutes) return startMinutes - nowMinutes;
+  const headway = 10;
+  const nextDeparture = startMinutes + Math.ceil((nowMinutes - startMinutes) / headway) * headway;
+  if (endTimeStr && nextDeparture >= endMinutes) return null;
+  return Math.max(0, nextDeparture - nowMinutes);
 }
