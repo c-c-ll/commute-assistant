@@ -1,33 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { VitePWA } from 'vite-plugin-pwa';
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 export default defineConfig({
   plugins: [
     react(),
-    {
-      name: 'serve-pwa-dev-assets',
-      apply: 'serve',
-      configureServer(server) {
-        server.middlewares.use((req, res, next) => {
-          var url = req.url || '';
-          if (url === '/sw.js' || url.startsWith('/workbox-') || url === '/registerSW.js') {
-            var filePath = resolve(process.cwd(), 'dev-dist', url.slice(1));
-            if (existsSync(filePath)) {
-              var content = readFileSync(filePath, 'utf8');
-              res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
-              res.setHeader('Service-Worker-Allowed', '/');
-              res.statusCode = 200;
-              res.end(content);
-              return;
-            }
-          }
-          next();
-        });
-      },
-    },
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg', 'icon-192.png', 'icon-512.png'],
@@ -54,10 +31,4 @@ export default defineConfig({
       },
     }),
   ],
-  server: {
-    port: 5001, host: '0.0.0.0', allowedHosts: true,
-    hmr: { overlay: false, timeout: 30000 },
-    watch: { usePolling: true, interval: 100 },
-    proxy: { '/api': { target: 'http://localhost:5002', changeOrigin: true } },
-  },
 });
