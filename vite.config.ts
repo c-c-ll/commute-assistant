@@ -3,9 +3,7 @@ import react from '@vitejs/plugin-react-swc';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-   define: {
-    'import.meta.env.VITE_API_BASE': JSON.stringify('https://nsfrkquwczuceztrmzhl.supabase.co/functions/v1/amap-proxy/api'),
-  },
+  base: '/commute-assistant/',
   plugins: [
     react(),
     VitePWA({
@@ -16,18 +14,18 @@ export default defineConfig({
       manifest: {
         name: '北京通勤助手', short_name: '通勤助手',
         description: '北京公交地铁路线规划查询',
-        start_url: '/', display: 'standalone', orientation: 'portrait',
+        start_url: '/commute-assistant/', display: 'standalone', orientation: 'portrait',
         background_color: '#f8fafc', theme_color: '#2563eb', lang: 'zh-CN',
         icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any' },
+          { src: '/commute-assistant/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: '/commute-assistant/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: '/commute-assistant/icon.svg', sizes: '512x512', type: 'image/svg+xml', purpose: 'any' },
         ],
       },
       workbox: {
         globPatterns: ['**/*.{html,js,css,ico,png,svg,woff2}'],
         runtimeCaching: [{
-          urlPattern: /^\/api\//,
+          urlPattern: /\/api\//,
           handler: 'NetworkFirst',
           options: { cacheName: 'api-cache', expiration: { maxEntries: 30, maxAgeSeconds: 300 }, networkTimeoutSeconds: 10 },
         }],
